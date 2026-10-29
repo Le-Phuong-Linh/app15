@@ -28,8 +28,8 @@ username = st.sidebar.text_input("Username (Email)", value="")
 app_password = st.sidebar.text_input("Application Password", type="password", value="")
 
 st.sidebar.header("Параметры публикации")
-category_id = st.sidebar.number_input("Category ID", value="")
-author_id = st.sidebar.number_input("Author ID", value="")
+category_id = st.sidebar.number_input("Category ID", value=1072)
+author_id = st.sidebar.number_input("Author ID", value=975)
 toc_url = st.sidebar.text_input("TOC URL", value="ссылка на страницу глав")
 title_prefix = st.sidebar.text_input("Префикс заголовка", value="Летающий скальпель — ")
 
