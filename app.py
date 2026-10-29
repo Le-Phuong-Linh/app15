@@ -23,14 +23,14 @@ st.write("Загрузите файлы глав (`.txt`) и опциональ�
 # SIDEBAR / CONFIGURATION INPUTS
 # =====================================================
 st.sidebar.header("Настройки WordPress")
-wp_url = st.sidebar.text_input("WP URL", value="https://www.asianwebnovels.com")
+wp_url = st.sidebar.text_input("WP URL", value="")
 username = st.sidebar.text_input("Username (Email)", value="")
 app_password = st.sidebar.text_input("Application Password", type="password", value="")
 
 st.sidebar.header("Параметры публикации")
-category_id = st.sidebar.number_input("Category ID", value=1072)
-author_id = st.sidebar.number_input("Author ID", value=975)
-toc_url = st.sidebar.text_input("TOC URL", value="https://asianwebnovels.com/small-town-remedy-list-of-chapters/")
+category_id = st.sidebar.number_input("Category ID", value=)
+author_id = st.sidebar.number_input("Author ID", value=)
+toc_url = st.sidebar.text_input("TOC URL", value="")
 title_prefix = st.sidebar.text_input("Префикс заголовка", value="Летающий скальпель — ")
 
 st.sidebar.header("Расписание")
