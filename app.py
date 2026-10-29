@@ -24,8 +24,8 @@ st.write("Загрузите файлы глав (`.txt`) и опциональ�
 # =====================================================
 st.sidebar.header("Настройки WordPress")
 wp_url = st.sidebar.text_input("WP URL", value="https://www.asianwebnovels.com")
-username = st.sidebar.text_input("Username (Email)", value="linhlepersonal@gmail.com")
-app_password = st.sidebar.text_input("Application Password", type="password", value="qGGu 2xru S4o0 2P1o gS6b N9vl")
+username = st.sidebar.text_input("Username (Email)", value="")
+app_password = st.sidebar.text_input("Application Password", type="password", value="")
 
 st.sidebar.header("Параметры публикации")
 category_id = st.sidebar.number_input("Category ID", value=1072)
