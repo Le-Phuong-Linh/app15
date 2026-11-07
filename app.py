@@ -17,7 +17,7 @@ import uuid
 st.set_page_config(page_title="WP Chapter Publisher", page_icon="🚀", layout="centered")
 
 st.title("🚀 WordPress Bulk Chapter Publisher")
-st.write("Загрузите файлы глав (`.txt`) и опционально иллюстрации. Скрипт автоматически отформатирует текст с учетом сносок, добавит оглавление и запланирует публикации на WordPress.")
+st.write("Загрузите файлы глав (`.txt`) и опционально иллюстрации. Скрипт отформатирует текст со сносками, добавит картинку в начало текста, оглавление и создаст публикации на WordPress.")
 
 # =====================================================
 # SIDEBAR / CONFIGURATION INPUTS
@@ -28,12 +28,19 @@ username = st.sidebar.text_input("Username (Email)", value="")
 app_password = st.sidebar.text_input("Application Password", type="password", value="")
 
 st.sidebar.header("Параметры публикации")
+post_status = st.sidebar.selectbox(
+    "Статус поста",
+    options=["future", "draft"],
+    index=0,
+    format_func=lambda x: "Запланировано (future)" if x == "future" else "Черновик (draft)"
+)
 category_id = st.sidebar.number_input("Category ID", value=1072)
 author_id = st.sidebar.number_input("Author ID", value=975)
 toc_url = st.sidebar.text_input("TOC URL", value="ссылка на страницу глав")
 title_prefix = st.sidebar.text_input("Префикс заголовка", value="Летающий скальпель — ")
+img_caption_prefix = st.sidebar.text_input("Текст/подпись для картинки в начале", value="Иллюстрация к главе")
 
-st.sidebar.header("Расписание")
+st.sidebar.header("Расписание (актуально для статуса 'Future')")
 start_date = st.sidebar.date_input("Дата первой публикации", value=datetime(2026, 10, 9).date())
 start_time = st.sidebar.time_input("Время первой публикации", value=datetime.strptime("05:21:00", "%H:%M:%S").time())
 interval_minutes = st.sidebar.number_input("Интервал между главами (минуты)", min_value=1, value=1)
@@ -49,9 +56,9 @@ st.write("Имена файлов должны строго соответств
 uploaded_img_files = st.file_uploader("Загрузите картинки для глав", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
 
 # =====================================================
-# HELPER FUNCTIONS (FROM YOUR SCRIPT)
+# HELPER FUNCTIONS
 # =====================================================
-def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> int:
+def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> tuple[int, str]:
     url = f"{wp_url}/wp-json/wp/v2/media"
     filename = image_path.name
     mime_type, _ = mimetypes.guess_type(filename)
@@ -66,7 +73,9 @@ def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> i
     if resp.status_code != 201:
         raise RuntimeError(f"Media upload failed: {resp.status_code} {resp.text}")
 
-    media_id = resp.json()["id"]
+    resp_data = resp.json()
+    media_id = resp_data["id"]
+    source_url = resp_data.get("source_url", "")
 
     if alt_text:
         meta_url = f"{wp_url}/wp-json/wp/v2/media/{media_id}"
@@ -81,7 +90,7 @@ def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> i
         )
         meta_resp.raise_for_status()
 
-    return media_id
+    return media_id, source_url
 
 def create_post(wp_url, auth_header, title: str, content_html: str, status: str = "future", categories=None, featured_media_id=None, author_id=None, date_gmt_str: str = None) -> int:
     if categories is None: categories = []
@@ -89,7 +98,7 @@ def create_post(wp_url, auth_header, title: str, content_html: str, status: str 
     payload = {"title": title, "content": content_html, "status": status, "categories": categories}
     if author_id is not None: payload["author"] = author_id
     if featured_media_id is not None: payload["featured_media"] = featured_media_id
-    if date_gmt_str is not None: payload["date_gmt"] = date_gmt_str
+    if date_gmt_str is not None and status == "future": payload["date_gmt"] = date_gmt_str
 
     headers = {"Authorization": auth_header, "Content-Type": "application/json; charset=utf-8"}
     resp = requests.post(url, headers=headers, json=payload, timeout=60)
@@ -211,7 +220,7 @@ if st.button("Запустить публикацию в WordPress"):
                     title = f"{title_prefix}{clean_file_name}"
                     date_iso = current_post_time.strftime("%Y-%m-%dT%H:%M:%S")
 
-                    st.write(f"📌 Обработка главы {chapter_num}: **{title}** (Запланировано на: {date_iso})")
+                    st.write(f"📌 Обработка главы {chapter_num}: **{title}** (Статус: {post_status}, Дата: {date_iso if post_status == 'future' else 'Н/Д'})")
 
                     # Check image
                     base_name = f"small_town_remedy_chapter_{chapter_num}"
@@ -223,15 +232,27 @@ if st.button("Запустить публикацию в WordPress"):
                             break
 
                     media_id = None
+                    source_url = None
                     if image_path:
                         try:
                             st.write(f"   -> Загрузка изображения: {image_path.name}")
-                            media_id = upload_media(wp_url, auth_header, image_path, alt_text=f"Chapter {chapter_num} Illustration")
+                            alt_text_val = f"Chapter {chapter_num} Illustration"
+                            media_id, source_url = upload_media(wp_url, auth_header, image_path, alt_text=alt_text_val)
                         except Exception as e:
                             st.warning(f"   -> Ошибка загрузки картинки: {e}. Публикация без изображения.")
 
                     raw_text = text_path.read_text(encoding="utf-8")
                     content = html_wrap(raw_text)
+
+                    # Insert image at the beginning of content if uploaded
+                    if media_id and source_url:
+                        caption_text = f"{img_caption_prefix} {chapter_num}"
+                        image_block = (
+                            f'<!-- wp:image {{"id":{media_id},"sizeSlug":"large","linkDestination":"none"}} -->\n'
+                            f'<figure class="wp-block-image size-large"><img src="{source_url}" alt="Chapter {chapter_num}" class="wp-image-{media_id}"/><figcaption class="wp-element-caption">{caption_text}</figcaption></figure>\n'
+                            f'<!-- /wp:image -->\n\n'
+                        )
+                        content = image_block + content
 
                     # Add TOC embed
                     content += (
@@ -247,7 +268,7 @@ if st.button("Запустить публикацию в WordPress"):
                         "auth_header": auth_header,
                         "title": title,
                         "content_html": content,
-                        "status": "future",
+                        "status": post_status,
                         "categories": [int(category_id)],
                         "author_id": int(author_id),
                         "date_gmt_str": date_iso,
@@ -266,4 +287,4 @@ if st.button("Запустить публикацию в WordPress"):
                 current_post_time += timedelta(minutes=int(interval_minutes))
                 progress_bar.progress(idx / total_files)
 
-        st.success(f"Готово! Успешно запланировано глав: {success_count} из {total_files}.")
+        st.success(f"Готово! Успешно обработано глав: {success_count} из {total_files}.")
