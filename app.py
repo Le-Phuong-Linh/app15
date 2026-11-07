@@ -23,8 +23,8 @@ st.write("Загрузите файлы глав (`.txt`) и опциональ�
 # SIDEBAR / CONFIGURATION INPUTS
 # =====================================================
 st.sidebar.header("Настройки WordPress")
-wp_url = st.sidebar.text_input("WP URL", value="")
-username = st.sidebar.text_input("Username (Email)", value="")
+wp_url = st.sidebar.text_input("WP URL (например, https://mysite.com)", value="")
+username = st.sidebar.text_input("Username", value="")
 app_password = st.sidebar.text_input("Application Password", type="password", value="")
 
 st.sidebar.header("Параметры публикации")
@@ -52,14 +52,14 @@ st.subheader("1. Загрузка текста глав (.txt)")
 uploaded_txt_files = st.file_uploader("Загрузите файлы глав (например, 'Глава 1.txt')", type=["txt"], accept_multiple_files=True)
 
 st.subheader("2. Загрузка иллюстраций (опционально)")
-st.write("Имена файлов должны строго соответствовать формату: `small_town_remedy_chapter_X.jpg` (или .png), где X — номер главы.")
+st.write("Имена файлов должны строго соответствовать формату: `ashes_of_love_chapter_X.jpg` (или .png), где X — номер главы.")
 uploaded_img_files = st.file_uploader("Загрузите картинки для глав", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
 
 # =====================================================
 # HELPER FUNCTIONS
 # =====================================================
 def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> tuple[int, str]:
-    url = f"{wp_url}/wp-json/wp/v2/media"
+    url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media"
     filename = image_path.name
     mime_type, _ = mimetypes.guess_type(filename)
     if not mime_type:
@@ -78,7 +78,7 @@ def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> t
     source_url = resp_data.get("source_url", "")
 
     if alt_text:
-        meta_url = f"{wp_url}/wp-json/wp/v2/media/{media_id}"
+        meta_url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media/{media_id}"
         meta_resp = requests.post(
             meta_url,
             headers={
@@ -94,7 +94,7 @@ def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> t
 
 def create_post(wp_url, auth_header, title: str, content_html: str, status: str = "future", categories=None, featured_media_id=None, author_id=None, date_gmt_str: str = None) -> int:
     if categories is None: categories = []
-    url = f"{wp_url}/wp-json/wp/v2/posts"
+    url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts"
     payload = {"title": title, "content": content_html, "status": status, "categories": categories}
     if author_id is not None: payload["author"] = author_id
     if featured_media_id is not None: payload["featured_media"] = featured_media_id
@@ -179,6 +179,8 @@ def extract_chapter_number(filename: str) -> int:
 if st.button("Запустить публикацию в WordPress"):
     if not uploaded_txt_files:
         st.error("Пожалуйста, загрузите хотя бы один файл главы (.txt).")
+    elif not wp_url or not username or not app_password:
+        st.error("Пожалуйста, заполните все настройки WordPress (URL, Username, Application Password).")
     else:
         input_dir = Path("temp_wp_input")
         if input_dir.exists():
@@ -222,8 +224,8 @@ if st.button("Запустить публикацию в WordPress"):
 
                     st.write(f"📌 Обработка главы {chapter_num}: **{title}** (Статус: {post_status}, Дата: {date_iso if post_status == 'future' else 'Н/Д'})")
 
-                    # Check image
-                    base_name = f"small_town_remedy_chapter_{chapter_num}"
+                    # Check image with new prefix
+                    base_name = f"ashes_of_love_chapter_{chapter_num}"
                     image_path = None
                     for ext in [".jpg", ".png", ".jpeg", ".webp"]:
                         candidate = input_dir / f"{base_name}{ext}"
