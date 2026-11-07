@@ -19,7 +19,7 @@ st.sidebar.header("WordPress Settings")
 
 wp_url = st.sidebar.text_input("WordPress URL", value="https://www.asianwebnovels.com")
 username = st.sidebar.text_input("Username / Email", value="linhlepersonal@gmail.com")
-app_password = st.sidebar.text_input("Application Password", value="qGGu 2xru S4o0 2P1o gS6b N9vl", type="password")
+app_password = st.sidebar.text_input("Application Password", value="", type="password")
 
 category_id = st.sidebar.number_input("Category ID", value=1095, step=1)
 author_id = st.sidebar.number_input("Author ID", value=975, step=1)
