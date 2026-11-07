@@ -1,81 +1,59 @@
-import streamlit as st
-import os
-import re
-import csv
-import time
-import shutil
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import base64
 import mimetypes
-from pathlib import Path
+import re
 from datetime import datetime, timedelta
-import requests
+from pathlib import Path
 import uuid
+import requests
+import streamlit as st
 
-# =====================================================
-# STREAMLIT UI CONFIGURATION
-# =====================================================
-st.set_page_config(page_title="WP Chapter Publisher", page_icon="🚀", layout="centered")
+st.set_page_config(page_title="WordPress Novel Auto-Publisher", page_icon="📚", layout="wide")
 
-st.title("🚀 WordPress Bulk Chapter Publisher")
-st.write("Загрузите файлы глав (`.txt`) и опционально иллюстрации. Скрипт отформатирует текст со сносками, добавит картинку в начало текста, оглавление и создаст публикации на WordPress.")
+# ==============================
+# SIDEBAR CONFIGURATION
+# ==============================
+st.sidebar.header("WordPress Settings")
 
-# =====================================================
-# SIDEBAR / CONFIGURATION INPUTS
-# =====================================================
-st.sidebar.header("Настройки WordPress")
-wp_url = st.sidebar.text_input("WP URL (например, https://mysite.com)", value="")
-username = st.sidebar.text_input("Username", value="")
-app_password = st.sidebar.text_input("Application Password", type="password", value="")
+wp_url = st.sidebar.text_input("WordPress URL", value="https://www.asianwebnovels.com")
+username = st.sidebar.text_input("Username / Email", value="linhlepersonal@gmail.com")
+app_password = st.sidebar.text_input("Application Password", value="qGGu 2xru S4o0 2P1o gS6b N9vl", type="password")
 
-st.sidebar.header("Параметры публикации")
-post_status = st.sidebar.selectbox(
-    "Статус поста",
-    options=["future", "draft"],
-    index=0,
-    format_func=lambda x: "Запланировано (future)" if x == "future" else "Черновик (draft)"
-)
-category_id = st.sidebar.number_input("Category ID", value=1072)
-author_id = st.sidebar.number_input("Author ID", value=975)
-toc_url = st.sidebar.text_input("TOC URL", value="ссылка на страницу глав")
-title_prefix = st.sidebar.text_input("Префикс заголовка", value="Летающий скальпель — ")
-img_caption_prefix = st.sidebar.text_input("Текст/подпись для картинки в начале", value="Иллюстрация к главе")
+category_id = st.sidebar.number_input("Category ID", value=1095, step=1)
+author_id = st.sidebar.number_input("Author ID", value=975, step=1)
+toc_url = st.sidebar.text_input("TOC URL", value="https://asianwebnovels.com/falling-into-you-list-of-chapters/")
+title_prefix = st.sidebar.text_input("Title Prefix", value="Пылающая дорожка — ")
+post_status = st.sidebar.selectbox("Post Status", options=["draft", "publish", "future", "private"], index=0)
 
-st.sidebar.header("Расписание (актуально для статуса 'Future')")
-start_date = st.sidebar.date_input("Дата первой публикации", value=datetime(2026, 10, 9).date())
-start_time = st.sidebar.time_input("Время первой публикации", value=datetime.strptime("05:21:00", "%H:%M:%S").time())
-interval_minutes = st.sidebar.number_input("Интервал между главами (минуты)", min_value=1, value=1)
+start_date = st.sidebar.date_input("Start Date", value=datetime(2026, 10, 12))
+start_time = st.sidebar.time_input("Start Time", value=datetime.strptime("05:11", "%H:%M").time())
+interval_minutes = st.sidebar.number_input("Interval between chapters (minutes)", value=1, min_value=0)
 
-# =====================================================
-# FILE UPLOADERS
-# =====================================================
-st.subheader("1. Загрузка текста глав (.txt)")
-uploaded_txt_files = st.file_uploader("Загрузите файлы глав (например, 'Глава 1.txt')", type=["txt"], accept_multiple_files=True)
+# Build Headers
+token = base64.b64encode(f"{username}:{app_password}".encode("utf-8")).decode("ascii")
+auth_header = f"Basic {token}"
 
-st.subheader("2. Загрузка иллюстраций (опционально)")
-st.write("Имена файлов должны строго соответствовать формату: `ashes_of_love_chapter_X.jpg` (или .png), где X — номер главы.")
-uploaded_img_files = st.file_uploader("Загрузите картинки для глав", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
 
-# =====================================================
-# HELPER FUNCTIONS
-# =====================================================
-def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> tuple[int, str]:
+# ==============================
+# WORDPRESS API FUNCTIONS
+# ==============================
+
+def upload_media_bytes(file_bytes: bytes, filename: str, alt_text: str = "") -> int:
     url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media"
-    filename = image_path.name
     mime_type, _ = mimetypes.guess_type(filename)
     if not mime_type:
         mime_type = "application/octet-stream"
 
-    with open(image_path, "rb") as f:
-        files = {"file": (filename, f, mime_type)}
-        headers = {"Authorization": auth_header}
-        resp = requests.post(url, headers=headers, files=files, timeout=60)
+    files = {"file": (filename, file_bytes, mime_type)}
+    headers = {"Authorization": auth_header}
+    resp = requests.post(url, headers=headers, files=files, timeout=60)
 
     if resp.status_code != 201:
-        raise RuntimeError(f"Media upload failed: {resp.status_code} {resp.text}")
+        raise RuntimeError(f"Media upload failed ({resp.status_code}): {resp.text}")
 
-    resp_data = resp.json()
-    media_id = resp_data["id"]
-    source_url = resp_data.get("source_url", "")
+    media_id = resp.json()["id"]
 
     if alt_text:
         meta_url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media/{media_id}"
@@ -90,23 +68,41 @@ def upload_media(wp_url, auth_header, image_path: Path, alt_text: str = "") -> t
         )
         meta_resp.raise_for_status()
 
-    return media_id, source_url
+    return media_id
 
-def create_post(wp_url, auth_header, title: str, content_html: str, status: str = "future", categories=None, featured_media_id=None, author_id=None, date_gmt_str: str = None) -> int:
-    if categories is None: categories = []
+
+def create_post(title: str, content_html: str, status: str = "draft", categories=None, featured_media_id=None, author_id_val=None, date_gmt_str: str = None) -> int:
+    if categories is None:
+        categories = []
     url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts"
-    payload = {"title": title, "content": content_html, "status": status, "categories": categories}
-    if author_id is not None: payload["author"] = author_id
-    if featured_media_id is not None: payload["featured_media"] = featured_media_id
-    if date_gmt_str is not None and status == "future": payload["date_gmt"] = date_gmt_str
+    payload = {
+        "title": title,
+        "content": content_html,
+        "status": status,
+        "categories": categories,
+    }
+    if author_id_val is not None:
+        payload["author"] = author_id_val
+    if featured_media_id is not None:
+        payload["featured_media"] = featured_media_id
+    if date_gmt_str is not None:
+        payload["date_gmt"] = date_gmt_str
 
-    headers = {"Authorization": auth_header, "Content-Type": "application/json; charset=utf-8"}
+    headers = {
+        "Authorization": auth_header,
+        "Content-Type": "application/json; charset=utf-8",
+    }
     resp = requests.post(url, headers=headers, json=payload, timeout=60)
 
     if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Post creation failed: {resp.status_code} {resp.text}")
+        raise RuntimeError(f"Post creation failed ({resp.status_code}): {resp.text}")
 
     return resp.json()["id"]
+
+
+# ==============================
+# HELPER FUNCTIONS
+# ==============================
 
 def html_wrap(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -124,6 +120,7 @@ def html_wrap(text: str) -> str:
         match = footnote_def_pattern.match(line)
         if match:
             num_str = match.group(1) or match.group(2) or match.group(3)
+            
             if num_str == "¹":
                 num = 1
             elif num_str == "²":
@@ -143,6 +140,7 @@ def html_wrap(text: str) -> str:
     for line in story_lines:
         for num, u_id in footnote_uuids.items():
             sign = "¹" if num == 1 else ("²" if num == 2 else None)
+            
             wp_sup = f'<sup data-fn="{u_id}" class="fn"><a id="{u_id}-link" href="#{u_id}">{num}</a></sup>'
             
             line = re.sub(rf"\[\^{num}\]", wp_sup, line)
@@ -167,96 +165,91 @@ def html_wrap(text: str) -> str:
 
     return "\n".join(processed_blocks)
 
-def extract_chapter_number(filename: str) -> int:
-    m = re.match(r"Глава\s*(\d+)", filename)
+
+def extract_chapter_number(file_name: str) -> int:
+    m = re.search(r"Глава\s*(\d+)", file_name)
     if not m:
-        raise ValueError(f"Не удалось извлечь номер главы из файла: {filename}")
+        raise ValueError(f"Could not extract chapter number from: {file_name}")
     return int(m.group(1))
 
-# =====================================================
-# MAIN EXECUTION BUTTON
-# =====================================================
-if st.button("Запустить публикацию в WordPress"):
-    if not uploaded_txt_files:
-        st.error("Пожалуйста, загрузите хотя бы один файл главы (.txt).")
-    elif not wp_url or not username or not app_password:
-        st.error("Пожалуйста, заполните все настройки WordPress (URL, Username, Application Password).")
+
+# ==============================
+# MAIN STREAMLIT APP INTERFACE
+# ==============================
+
+st.title("📚 WordPress Novel Chapter Uploader")
+st.markdown("Upload your chapter text files (`Глава *.txt`) and optional chapter images to schedule WordPress posts automatically.")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    txt_files = st.file_uploader(
+        "Upload Chapter Text Files (.txt)",
+        type=["txt"],
+        accept_multiple_files=True,
+        help="Filenames should match the format 'Глава 1.txt', 'Глава 2.txt', etc."
+    )
+
+with col2:
+    image_files = st.file_uploader(
+        "Upload Chapter Images (Optional: .jpg, .png)",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        help="Filenames should match 'wrong_carriage_right_groom_1.jpg' format."
+    )
+
+if st.button("🚀 Publish / Schedule Chapters", type="primary"):
+    if not txt_files:
+        st.error("Please upload at least one `.txt` chapter file.")
     else:
-        input_dir = Path("temp_wp_input")
-        if input_dir.exists():
-            shutil.rmtree(input_dir)
-        input_dir.mkdir(parents=True, exist_ok=True)
+        # Build image map based on chapter numbers in image filenames
+        image_map = {}
+        for img in image_files:
+            m = re.search(r"(\d+)", Path(img.name).stem)
+            if m:
+                image_map[int(m.group(1))] = img
 
-        # Save txt files
-        for f in uploaded_txt_files:
-            with open(input_dir / f.name, "wb") as file_out:
-                file_out.write(f.getbuffer())
-
-        # Save image files if any
-        if uploaded_img_files:
-            for f in uploaded_img_files:
-                with open(input_dir / f.name, "wb") as file_out:
-                    file_out.write(f.getbuffer())
-
-        # Prepare Auth
-        token = base64.b64encode(f"{username}:{app_password}".encode("utf-8")).decode("ascii")
-        auth_header = f"Basic {token}"
-
-        txt_paths = [input_dir / f.name for f in uploaded_txt_files if f.name.lower().endswith(".txt")]
-        txt_paths = sorted(txt_paths, key=lambda p: extract_chapter_number(p.name))
+        # Sort text files by chapter number
+        try:
+            sorted_txt_files = sorted(txt_files, key=lambda f: extract_chapter_number(f.name))
+        except ValueError as e:
+            st.error(f"Error parsing chapter numbers: {e}")
+            st.stop()
 
         current_post_time = datetime.combine(start_date, start_time)
-        
-        status_container = st.empty()
-        log_area = st.container()
         progress_bar = st.progress(0)
+        status_box = st.empty()
 
-        success_count = 0
-        total_files = len(txt_paths)
+        total_files = len(sorted_txt_files)
 
-        with log_area:
-            for idx, text_path in enumerate(txt_paths, 1):
-                try:
-                    chapter_num = extract_chapter_number(text_path.name)
-                    clean_file_name = text_path.stem
-                    title = f"{title_prefix}{clean_file_name}"
-                    date_iso = current_post_time.strftime("%Y-%m-%dT%H:%M:%S")
+        for idx, text_file in enumerate(sorted_txt_files):
+            try:
+                chapter_num = extract_chapter_number(text_file.name)
+                clean_file_name = Path(text_file.name).stem
+                title = f"{title_prefix}{clean_file_name}"
+                date_iso = current_post_time.strftime("%Y-%m-%dT%H:%M:%S")
 
-                    st.write(f"📌 Обработка главы {chapter_num}: **{title}** (Статус: {post_status}, Дата: {date_iso if post_status == 'future' else 'Н/Д'})")
+                status_box.info(f"Processing **Chapter {chapter_num}** ({idx + 1}/{total_files})...")
 
-                    # Check image with new prefix
-                    base_name = f"ashes_of_love_chapter_{chapter_num}"
-                    image_path = None
-                    for ext in [".jpg", ".png", ".jpeg", ".webp"]:
-                        candidate = input_dir / f"{base_name}{ext}"
-                        if candidate.exists():
-                            image_path = candidate
-                            break
-
-                    media_id = None
-                    source_url = None
-                    if image_path:
-                        try:
-                            st.write(f"   -> Загрузка изображения: {image_path.name}")
-                            alt_text_val = f"Chapter {chapter_num} Illustration"
-                            media_id, source_url = upload_media(wp_url, auth_header, image_path, alt_text=alt_text_val)
-                        except Exception as e:
-                            st.warning(f"   -> Ошибка загрузки картинки: {e}. Публикация без изображения.")
-
-                    raw_text = text_path.read_text(encoding="utf-8")
-                    content = html_wrap(raw_text)
-
-                    # Insert image at the beginning of content if uploaded
-                    if media_id and source_url:
-                        caption_text = f"{img_caption_prefix} {chapter_num}"
-                        image_block = (
-                            f'<!-- wp:image {{"id":{media_id},"sizeSlug":"large","linkDestination":"none"}} -->\n'
-                            f'<figure class="wp-block-image size-large"><img src="{source_url}" alt="Chapter {chapter_num}" class="wp-image-{media_id}"/><figcaption class="wp-element-caption">{caption_text}</figcaption></figure>\n'
-                            f'<!-- /wp:image -->\n\n'
+                # Handle media upload if matching image uploaded
+                media_id = None
+                if chapter_num in image_map:
+                    img_file = image_map[chapter_num]
+                    try:
+                        status_box.text(f"Uploading image: {img_file.name}...")
+                        media_id = upload_media_bytes(
+                            img_file.getvalue(),
+                            img_file.name,
+                            alt_text=f"Chapter {chapter_num} Illustration"
                         )
-                        content = image_block + content
+                    except Exception as e:
+                        st.warning(f"Failed to upload image for chapter {chapter_num}: {e}")
 
-                    # Add TOC embed
+                # Read text and build HTML content
+                raw_text = text_file.getvalue().decode("utf-8")
+                content = html_wrap(raw_text)
+                
+                if toc_url:
                     content += (
                         f"\n<!-- wp:embed {{\"url\":\"{toc_url}\",\"type\":\"wp-embed\",\"providerNameSlug\":\"asian-webnovels\"}} -->\n"
                         f"<figure class=\"wp-block-embed is-type-wp-embed is-provider-asian-webnovels wp-block-embed-asian-webnovels\"><div class=\"wp-block-embed__wrapper\">\n"
@@ -265,28 +258,26 @@ if st.button("Запустить публикацию в WordPress"):
                         f"<!-- /wp:embed -->\n"
                     )
 
-                    post_kwargs = {
-                        "wp_url": wp_url,
-                        "auth_header": auth_header,
-                        "title": title,
-                        "content_html": content,
-                        "status": post_status,
-                        "categories": [int(category_id)],
-                        "author_id": int(author_id),
-                        "date_gmt_str": date_iso,
-                    }
+                post_kwargs = {
+                    "title": title,
+                    "content_html": content,
+                    "status": post_status,
+                    "categories": [int(category_id)],
+                    "author_id_val": int(author_id),
+                    "date_gmt_str": date_iso,
+                }
 
-                    if media_id is not None:
-                        post_kwargs["featured_media_id"] = media_id
+                if media_id is not None:
+                    post_kwargs["featured_media_id"] = media_id
 
-                    post_id = create_post(**post_kwargs)
-                    st.success(f"   -> Успешно создано! ID поста: {post_id}")
-                    success_count += 1
+                post_id = create_post(**post_kwargs)
+                st.success(f"✅ Chapter {chapter_num} scheduled successfully (Post ID: {post_id}) at {date_iso}")
 
-                except Exception as e:
-                    st.error(f"   -> Ошибка с файлом {text_path.name}: {e}")
+                current_post_time += timedelta(minutes=interval_minutes)
 
-                current_post_time += timedelta(minutes=int(interval_minutes))
-                progress_bar.progress(idx / total_files)
+            except Exception as err:
+                st.error(f"❌ Error processing chapter file `{text_file.name}`: {err}")
 
-        st.success(f"Готово! Успешно обработано глав: {success_count} из {total_files}.")
+            progress_bar.progress((idx + 1) / total_files)
+
+        status_box.success("🎉 All chapters processed successfully!")
