@@ -21,7 +21,7 @@ wp_url = st.sidebar.text_input("WordPress URL", value="https://www.asianwebnovel
 username = st.sidebar.text_input("Username / Email", value="linhlepersonal@gmail.com")
 app_password = st.sidebar.text_input("Application Password", value="", type="password")
 
-category_id = st.sidebar.number_input("Category ID", value=1095, step=1)
+category_id = st.sidebar.number_input("Category ID", value=1395, step=1)
 author_id = st.sidebar.number_input("Author ID", value=975, step=1)
 toc_url = st.sidebar.text_input("TOC URL", value="https://asianwebnovels.com/falling-into-you-list-of-chapters/")
 title_prefix = st.sidebar.text_input("Title Prefix", value="Пылающая дорожка — ")
