@@ -21,7 +21,7 @@ wp_url = st.sidebar.text_input("WordPress URL", value="https://www.asianwebnovel
 username = st.sidebar.text_input("Username / Email", value="linhlepersonal@gmail.com")
 app_password = st.sidebar.text_input("Application Password", value="", type="password")
 
-category_id = st.sidebar.number_input("Category ID", value=0, step=1)
+category_id = st.sidebar.number_input("Category ID", value=0, step=1, help="Set to 0 to omit category assignment.")
 author_id = st.sidebar.number_input("Author ID", value=1395, step=1)
 toc_url = st.sidebar.text_input("TOC URL", value="https://asianwebnovels.com/falling-into-you-list-of-chapters/")
 title_prefix = st.sidebar.text_input("Title Prefix", value="Пылающая дорожка — ")
@@ -80,15 +80,14 @@ def create_post(
     author_id_val=None,
     date_gmt_str: str = None,
 ) -> int:
-    if categories is None:
-        categories = []
     url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts"
     payload = {
         "title": title,
         "content": content_html,
         "status": status,
-        "categories": categories,
     }
+    if categories:
+        payload["categories"] = categories
     if author_id_val is not None:
         payload["author"] = author_id_val
     if featured_media_id is not None:
@@ -193,7 +192,6 @@ def parse_image_chapter_range(file_name: str) -> tuple[int, int] | None:
     """
     stem = Path(file_name).stem
 
-    # Match trailing range like '_1-3' or '-1-3' or ' 1-3'
     range_match = re.search(r"(?:^|[\s_-])(\d+)\s*-\s*(\d+)$", stem)
     if range_match:
         start_ch = int(range_match.group(1))
@@ -202,7 +200,6 @@ def parse_image_chapter_range(file_name: str) -> tuple[int, int] | None:
             start_ch, end_ch = end_ch, start_ch
         return start_ch, end_ch
 
-    # Fallback to single chapter number at end of stem, or first number in stem
     single_end_match = re.search(r"(?:^|[\s_-])(\d+)$", stem)
     if single_end_match:
         ch = int(single_end_match.group(1))
@@ -277,7 +274,6 @@ if st.button("🚀 Publish / Schedule Chapters", type="primary"):
         for warn_msg in img_warnings:
             st.warning(warn_msg)
 
-        # Cache uploaded media IDs by image filename so range images upload only once
         uploaded_media_cache: dict[str, int] = {}
         failed_media_filenames: set[str] = set()
 
@@ -302,7 +298,6 @@ if st.button("🚀 Publish / Schedule Chapters", type="primary"):
 
                 status_box.info(f"Processing **Chapter {chapter_num}** ({idx + 1}/{total_files})...")
 
-                # Handle media upload if matching image/range uploaded
                 media_id = None
                 if chapter_num in image_map:
                     img_file = image_map[chapter_num]
@@ -329,7 +324,6 @@ if st.button("🚀 Publish / Schedule Chapters", type="primary"):
                             failed_media_filenames.add(img_key)
                             st.warning(f"Failed to upload image `{img_file.name}` for chapter {chapter_num}: {e}")
 
-                # Read text and build HTML content
                 raw_text = text_file.getvalue().decode("utf-8")
                 content = html_wrap(raw_text)
 
@@ -346,10 +340,12 @@ if st.button("🚀 Publish / Schedule Chapters", type="primary"):
                     "title": title,
                     "content_html": content,
                     "status": post_status,
-                    "categories": [int(category_id)],
                     "author_id_val": int(author_id),
                     "date_gmt_str": date_iso,
                 }
+
+                if int(category_id) > 0:
+                    post_kwargs["categories"] = [int(category_id)]
 
                 if media_id is not None:
                     post_kwargs["featured_media_id"] = media_id
