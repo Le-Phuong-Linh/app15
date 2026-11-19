@@ -71,7 +71,15 @@ def upload_media_bytes(file_bytes: bytes, filename: str, alt_text: str = "") -> 
     return media_id
 
 
-def create_post(title: str, content_html: str, status: str = "draft", categories=None, featured_media_id=None, author_id_val=None, date_gmt_str: str = None) -> int:
+def create_post(
+    title: str,
+    content_html: str,
+    status: str = "draft",
+    categories=None,
+    featured_media_id=None,
+    author_id_val=None,
+    date_gmt_str: str = None,
+) -> int:
     if categories is None:
         categories = []
     url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts"
@@ -107,31 +115,31 @@ def create_post(title: str, content_html: str, status: str = "draft", categories
 def html_wrap(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.strip() for line in text.split("\n")]
-    
+
     story_lines = []
     footnotes_dict = {}
-    
+
     footnote_def_pattern = re.compile(r"^(?:\[\^?(\d+)\]|(\d+)\s*\.|\s*([¹²]))\s*(?:\:)?\s*(.*)")
 
     for line in lines:
         if not line:
             continue
-        
+
         match = footnote_def_pattern.match(line)
         if match:
             num_str = match.group(1) or match.group(2) or match.group(3)
-            
+
             if num_str == "¹":
                 num = 1
             elif num_str == "²":
                 num = 2
             else:
                 num = int(num_str)
-                
+
             content = match.group(4).strip()
             footnotes_dict[num] = content
             continue
-        
+
         story_lines.append(line)
 
     footnote_uuids = {num: str(uuid.uuid4()) for num in footnotes_dict.keys()}
@@ -140,9 +148,9 @@ def html_wrap(text: str) -> str:
     for line in story_lines:
         for num, u_id in footnote_uuids.items():
             sign = "¹" if num == 1 else ("²" if num == 2 else None)
-            
+
             wp_sup = f'<sup data-fn="{u_id}" class="fn"><a id="{u_id}-link" href="#{u_id}">{num}</a></sup>'
-            
+
             line = re.sub(rf"\[\^{num}\]", wp_sup, line)
             line = re.sub(rf"\[{num}\]", wp_sup, line)
             if sign:
@@ -152,9 +160,11 @@ def html_wrap(text: str) -> str:
         processed_blocks.append(block)
 
     if footnote_uuids:
-        processed_blocks.append("<!-- wp:separator -->\n<hr class=\"wp-block-separator has-alpha-channel-opacity\"/>\n<!-- /wp:separator -->\n")
+        processed_blocks.append(
+            "<!-- wp:separator -->\n<hr class=\"wp-block-separator has-alpha-channel-opacity\"/>\n<!-- /wp:separator -->\n"
+        )
         processed_blocks.append("<!-- wp:footnotes {\"className\":\"wp-block-footnotes\"} /-->\n")
-        
+
         list_block = "<!-- wp:list {\"ordered\":true,\"className\":\"wp-block-footnotes\"} -->\n<ol class=\"wp-block-footnotes\">"
         for num in sorted(footnote_uuids.keys()):
             u_id = footnote_uuids[num]
@@ -173,12 +183,73 @@ def extract_chapter_number(file_name: str) -> int:
     return int(m.group(1))
 
 
+def parse_image_chapter_range(file_name: str) -> tuple[int, int] | None:
+    """
+    Extracts (start_chapter, end_chapter) from image filenames like:
+      - 'tiger_1-3.jpg'  -> (1, 3)
+      - 'tiger_1-5.png'  -> (1, 5)
+      - 'tiger_4.jpg'    -> (4, 4)
+      - '4.jpg'          -> (4, 4)
+    """
+    stem = Path(file_name).stem
+
+    # Match trailing range like '_1-3' or '-1-3' or ' 1-3'
+    range_match = re.search(r"(?:^|[\s_-])(\d+)\s*-\s*(\d+)$", stem)
+    if range_match:
+        start_ch = int(range_match.group(1))
+        end_ch = int(range_match.group(2))
+        if start_ch > end_ch:
+            start_ch, end_ch = end_ch, start_ch
+        return start_ch, end_ch
+
+    # Fallback to single chapter number at end of stem, or first number in stem
+    single_end_match = re.search(r"(?:^|[\s_-])(\d+)$", stem)
+    if single_end_match:
+        ch = int(single_end_match.group(1))
+        return ch, ch
+
+    any_num_match = re.search(r"(\d+)", stem)
+    if any_num_match:
+        ch = int(any_num_match.group(1))
+        return ch, ch
+
+    return None
+
+
+def build_chapter_image_map(image_files) -> tuple[dict[int, object], list[str]]:
+    """
+    Maps each chapter number to its corresponding UploadedFile.
+    Returns (chapter_to_image_dict, warnings_list).
+    """
+    chapter_map: dict[int, object] = {}
+    warnings: list[str] = []
+
+    if not image_files:
+        return chapter_map, warnings
+
+    for img in image_files:
+        parsed = parse_image_chapter_range(img.name)
+        if not parsed:
+            warnings.append(f"Could not detect chapter number or range from image `{img.name}`; skipping.")
+            continue
+
+        start_ch, end_ch = parsed
+        for ch in range(start_ch, end_ch + 1):
+            if ch in chapter_map:
+                warnings.append(
+                    f"Chapter {ch} already matched `{chapter_map[ch].name}`; overwritten by `{img.name}`."
+                )
+            chapter_map[ch] = img
+
+    return chapter_map, warnings
+
+
 # ==============================
 # MAIN STREAMLIT APP INTERFACE
 # ==============================
 
 st.title("📚 WordPress Novel Chapter Uploader")
-st.markdown("Upload your chapter text files (`Глава *.txt`) and optional chapter images to schedule WordPress posts automatically.")
+st.markdown("Upload your chapter text files (`Глава *.txt`) and optional chapter or range images to schedule WordPress posts automatically.")
 
 col1, col2 = st.columns(2)
 
@@ -187,7 +258,7 @@ with col1:
         "Upload Chapter Text Files (.txt)",
         type=["txt"],
         accept_multiple_files=True,
-        help="Filenames should match the format 'Глава 1.txt', 'Глава 2.txt', etc."
+        help="Filenames should match the format 'Глава 1.txt', 'Глава 2.txt', etc.",
     )
 
 with col2:
@@ -195,21 +266,21 @@ with col2:
         "Upload Chapter Images (Optional: .jpg, .png)",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
-        help="Filenames should match 'wrong_carriage_right_groom_1.jpg' format."
+        help="Supports single chapters (e.g. 'tiger_1.jpg') or ranges (e.g. 'tiger_1-3.jpg', 'tiger_1-5.png').",
     )
 
 if st.button("🚀 Publish / Schedule Chapters", type="primary"):
     if not txt_files:
         st.error("Please upload at least one `.txt` chapter file.")
     else:
-        # Build image map based on chapter numbers in image filenames
-        image_map = {}
-        for img in image_files:
-            m = re.search(r"(\d+)", Path(img.name).stem)
-            if m:
-                image_map[int(m.group(1))] = img
+        image_map, img_warnings = build_chapter_image_map(image_files)
+        for warn_msg in img_warnings:
+            st.warning(warn_msg)
 
-        # Sort text files by chapter number
+        # Cache uploaded media IDs by image filename so range images upload only once
+        uploaded_media_cache: dict[str, int] = {}
+        failed_media_filenames: set[str] = set()
+
         try:
             sorted_txt_files = sorted(txt_files, key=lambda f: extract_chapter_number(f.name))
         except ValueError as e:
@@ -231,24 +302,37 @@ if st.button("🚀 Publish / Schedule Chapters", type="primary"):
 
                 status_box.info(f"Processing **Chapter {chapter_num}** ({idx + 1}/{total_files})...")
 
-                # Handle media upload if matching image uploaded
+                # Handle media upload if matching image/range uploaded
                 media_id = None
                 if chapter_num in image_map:
                     img_file = image_map[chapter_num]
-                    try:
-                        status_box.text(f"Uploading image: {img_file.name}...")
-                        media_id = upload_media_bytes(
-                            img_file.getvalue(),
-                            img_file.name,
-                            alt_text=f"Chapter {chapter_num} Illustration"
-                        )
-                    except Exception as e:
-                        st.warning(f"Failed to upload image for chapter {chapter_num}: {e}")
+                    img_key = img_file.name
+
+                    if img_key in uploaded_media_cache:
+                        media_id = uploaded_media_cache[img_key]
+                    elif img_key not in failed_media_filenames:
+                        try:
+                            status_box.text(f"Uploading image: {img_file.name}...")
+                            parsed_range = parse_image_chapter_range(img_file.name)
+                            if parsed_range and parsed_range[0] != parsed_range[1]:
+                                alt = f"Chapters {parsed_range[0]}-{parsed_range[1]} Illustration"
+                            else:
+                                alt = f"Chapter {chapter_num} Illustration"
+
+                            media_id = upload_media_bytes(
+                                img_file.getvalue(),
+                                img_file.name,
+                                alt_text=alt,
+                            )
+                            uploaded_media_cache[img_key] = media_id
+                        except Exception as e:
+                            failed_media_filenames.add(img_key)
+                            st.warning(f"Failed to upload image `{img_file.name}` for chapter {chapter_num}: {e}")
 
                 # Read text and build HTML content
                 raw_text = text_file.getvalue().decode("utf-8")
                 content = html_wrap(raw_text)
-                
+
                 if toc_url:
                     content += (
                         f"\n<!-- wp:embed {{\"url\":\"{toc_url}\",\"type\":\"wp-embed\",\"providerNameSlug\":\"asian-webnovels\"}} -->\n"
